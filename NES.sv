@@ -101,13 +101,20 @@ module emu
 	// 1 - D-/TX
 	// 2..6 - USR2..USR6
 	// Set USER_OUT to 1 to read from USER_IN.
-	input   [6:0] USER_IN,
-	output  [6:0] USER_OUT,
+    output  	  USER_OSD,	
+    output	  	  USER_MODE,	
+	input   [7:0] USER_IN,
+	output  [7:0] USER_OUT,
 
 	input         OSD_STATUS
 );
 
 assign ADC_BUS  = 'Z;
+
+wire   joy_split, joy_mdsel;
+wire   [5:0] joy_in = |status[63:62] ? {USER_IN[6],USER_IN[3],USER_IN[5],USER_IN[7],USER_IN[1],USER_IN[2]} : '1;
+assign USER_MODE = |status[63:62] ;
+assign USER_OSD  = joydb9md_1[7] & joydb9md_1[5];
 
 assign AUDIO_S   = 1'b1;
 assign AUDIO_L   = |mute_cnt ? 16'd0 : sample_signed[15:0];
@@ -165,13 +172,15 @@ parameter CONF_STR2 = {
 	"OP,Extra Sprites,Off,On;",
 	"OCF,Palette,Smooth,Unsat.,FCEUX,NES Classic,Composite,PC-10,PVM,Wavebeam,Real,Sony CXA,YUV,Greyscale,Rockman9,Ninten.,Custom;",
 	"H3F3,PAL,Custom Palette;",
+   "D5oUV,Serial SNAC DB9,Off,1 Player,2 Players;",
 	"-;",
 	"O9,Swap Joysticks,No,Yes;",
 	"OIJ,Peripheral,Powerpad,Zapper(Mouse),Zapper(Joy1),Zapper(Joy2);",
 	"OL,Zapper Trigger,Mouse,Joystick;",
 	"OM,Crosshairs,On,Off;",
 	"OA,Multitap,Disabled,Enabled;",
-	"OQ,Serial Mode,None,SNAC;",
+	"D6OQ,Serial Mode,None,SNAC;",
+	"H4OB,SNAC Mode, 1 Player, 2 Players;",		
 	"H4OT,SNAC Zapper,Off,On;",
 `ifdef DEBUG_AUDIO
 	"-;",
@@ -185,10 +194,10 @@ parameter CONF_STR2 = {
 	"V,v",`BUILD_DATE
 };
 
-wire [22:0] joyA,joyB,joyC,joyD;
+wire [22:0] joyA_USB,joyB_USB,joyC_USB,joyD_USB;
 wire [1:0] buttons;
 
-wire [31:0] status;
+wire [63:0] status;
 
 wire arm_reset = status[0];
 wire mirroring_osd = status[5];
@@ -310,6 +319,23 @@ wire        forced_scandoubler;
 
 wire [21:0] gamma_bus;
 
+wire [22:0] joyA = |status[63:62] ? {joydb9md_1[7],joydb9md_1[8],joydb9md_1[4],joydb9md_1[6],joydb9md_1[3:0]} : joyA_USB;
+wire [22:0] joyB =  status[63]    ? {joydb9md_1[7],joydb9md_1[8],joydb9md_1[4],joydb9md_1[6],joydb9md_1[3:0]} : status[62] ? joyA_USB : joyB_USB;
+wire [22:0] joyC =  status[63] ? joyA_USB : status[62] ? joyB_USB : joyC_USB;
+wire [22:0] joyD =  status[63] ? joyB_USB : status[62] ? joyC_USB : joyD_USB;
+
+
+reg [15:0] joydb9md_1,joydb9md_2;
+joy_db9md joy_db9md
+(
+  .clk       ( CLK_VIDEO ), //48MHz
+  .joy_split ( joy_split  ),
+  .joy_mdsel ( joy_mdsel  ),
+  .joy_in    ( joy_in     ),
+  .joystick1 ( joydb9md_1 ),
+  .joystick2 ( joydb9md_2 )	  
+);
+
 hps_io #(.STRLEN(($size(CONF_STR)>>3) + ($size(CONF_STR2)>>3) + 1)) hps_io
 (
 	.clk_sys(clk),
@@ -319,15 +345,16 @@ hps_io #(.STRLEN(($size(CONF_STR)>>3) + ($size(CONF_STR2)>>3) + 1)) hps_io
 	.buttons(buttons),
 	.forced_scandoubler(forced_scandoubler),
 
-	.joystick_0(joyA),
-	.joystick_1(joyB),
-	.joystick_2(joyC),
-	.joystick_3(joyD),
+	.joystick_0(joyA_USB),
+	.joystick_1(joyB_USB),
+	.joystick_2(joyC_USB),
+	.joystick_3(joyD_USB),
 	.joystick_analog_0(joy_analog0),
 	.joystick_analog_1(joy_analog1),
-
+	.joy_raw({joydb9md_1[4],joydb9md_1[6],joydb9md_1[3:0]}), //Menu Dirs, A:Action B:Back (OSD)
+	
 	.status(status),
-	.status_menumask({~raw_serial, (palette2_osd != 4'd14), ~gg_avail, bios_loaded, ~bk_ena}),
+	.status_menumask({raw_db9, raw_serial, ~raw_serial, (palette2_osd != 4'd14), ~gg_avail, bios_loaded, ~bk_ena}),
 
 	.gamma_bus(gamma_bus),
 
@@ -472,7 +499,9 @@ wire fds_eject = swap_delay[2] | fds_swap_invert ? fds_btn : (clkcount[21] | fds
 
 reg [1:0] nes_ce;
 
-wire raw_serial = status[26];
+wire raw_serial  = status[26];
+wire raw_serial2 = status[11];
+wire raw_db9    = |status[63:62];
 
 // Extend SNAC zapper high signal to be closer to original NES
 wire extend_serial_d4 = status[29];
@@ -501,18 +530,33 @@ end
 
 assign USER_OUT[2] = 1'b1;
 assign USER_OUT[3] = 1'b1;
-assign USER_OUT[4] = 1'b1;
 assign USER_OUT[5] = 1'b1;
-assign USER_OUT[6] = 1'b1;
+assign USER_OUT[7] = 1'b1;
 
 always_comb begin
-	if (raw_serial) begin
+	if (raw_serial & !raw_serial2) begin
 		USER_OUT[0] = joypad_strobe;
 		USER_OUT[1] = ~joy_swap ? ~joypad_clock[1] : ~joypad_clock[0];
+		USER_OUT[6] = 1'b1;
+	    USER_OUT[4] = 1'b1;
 		joy_data = {serial_d4, ~USER_IN[2], ~joy_swap ? ~USER_IN[5] : joypad_bits2[0], ~joy_swap ? joypad_bits[0] : ~USER_IN[5]};
+	end else if (raw_serial & raw_serial2) begin
+		USER_OUT[0] = joypad_strobe;
+		USER_OUT[1] = ~joy_swap ? ~joypad_clock[1] : ~joypad_clock[0];
+		USER_OUT[6] = ~joy_swap ? ~joypad_clock[0] : ~joypad_clock[1];
+		USER_OUT[4] = 1'b1;
+		joy_data = {serial_d4, ~USER_IN[2], ~joy_swap ? ~USER_IN[5] : ~USER_IN[3], ~joy_swap ? ~USER_IN[3] : ~USER_IN[5]};
+	end else if (raw_db9) begin
+		USER_OUT[0] = joy_mdsel;
+		USER_OUT[1] = ~joy_swap ? ~joypad_clock[1] : ~joypad_clock[0];
+		USER_OUT[4] = joy_split;
+		USER_OUT[6] = 1'b1;
+		joy_data = {lightgun_en ? trigger : powerpad_d4[0],lightgun_en ? light : powerpad_d3[0],joypad_bits2[0],joypad_bits[0]};
 	end else begin
 		USER_OUT[0] = 1'b1;
 		USER_OUT[1] = 1'b1;
+		USER_OUT[4] = 1'b1;
+		USER_OUT[6] = 1'b1;		
 		joy_data = {lightgun_en ? trigger : powerpad_d4[0],lightgun_en ? light : powerpad_d3[0],joypad_bits2[0],joypad_bits[0]};
 	end
 end
