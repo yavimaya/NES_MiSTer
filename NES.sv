@@ -102,7 +102,7 @@ module emu
 	// 2..6 - USR2..USR6
 	// Set USER_OUT to 1 to read from USER_IN.
     output  	  USER_OSD,	
-    output	  	  USER_MODE,	
+	output  [1:0] USER_MODE,
 	input   [7:0] USER_IN,
 	output  [7:0] USER_OUT,
 
@@ -111,10 +111,14 @@ module emu
 
 assign ADC_BUS  = 'Z;
 
-wire   joy_split, joy_mdsel;
-wire   [5:0] joy_in = |status[63:62] ? {USER_IN[6],USER_IN[3],USER_IN[5],USER_IN[7],USER_IN[1],USER_IN[2]} : '1;
-assign USER_MODE = |status[63:62] ;
-assign USER_OSD  = joydb9md_1[7] & joydb9md_1[5];
+wire         CLK_JOY = CLK_50M;         //Assign clock between 40-50Mhz
+wire   [2:0] JOY_FLAG  = {status[62],status[63],status[61]}; //Assign 3 bits of status (31:29) o (63:61)
+wire         JOY_CLK, JOY_LOAD, JOY_SPLIT, JOY_MDSEL;
+wire   [5:0] JOY_MDIN  = JOY_FLAG[2] ? {USER_IN[6],USER_IN[3],USER_IN[5],USER_IN[7],USER_IN[1],USER_IN[2]} : '1;
+wire         JOY_DATA  = JOY_FLAG[1] ? USER_IN[5] : '1;
+//assign       USER_OUT  = JOY_FLAG[2] ? {3'b111,JOY_SPLIT,3'b111,JOY_MDSEL} : JOY_FLAG[1] ? {6'b111111,JOY_CLK,JOY_LOAD} : '1;
+assign       USER_MODE = JOY_FLAG[2:1] ;
+assign       USER_OSD  = joydb_1[10] & joydb_1[6];
 
 assign AUDIO_S   = 1'b1;
 assign AUDIO_L   = |mute_cnt ? 16'd0 : sample_signed[15:0];
@@ -171,7 +175,8 @@ parameter CONF_STR2 = {
 	"OP,Extra Sprites,Off,On;",
 	"OCF,Palette,Smooth,Unsat.,FCEUX,NES Classic,Composite,PC-10,PVM,Wavebeam,Real,Sony CXA,YUV,Greyscale,Rockman9,Ninten.,Custom;",
 	"H3F3,PAL,Custom Palette;",
-   "D5oUV,Serial SNAC DB9,Off,1 Player,2 Players;",
+   	"D5oUV,UserIO Joystick,Off,DB9MD,DB15 ;",
+	"oT,UserIO Players, 1 Player,2 Players;",
 	"-;",
 	"O9,Swap Joysticks,No,Yes;",
 	"o02,Periphery,None,Zapper(Mouse),Zapper(Joy1),Zapper(Joy2),Vaus,Vaus(A-Trigger),Powerpad,Family Trainer;",
@@ -319,21 +324,41 @@ wire        forced_scandoubler;
 
 wire [21:0] gamma_bus;
 
-wire [22:0] joyA = |status[63:62] ? {joydb9md_1[7],joydb9md_1[8],joydb9md_1[6],joydb9md_1[4],joydb9md_1[3:0]} : joyA_USB;
-wire [22:0] joyB =  status[63]    ? {joydb9md_2[7],joydb9md_2[8],joydb9md_2[6],joydb9md_2[4],joydb9md_2[3:0]} : status[62] ? joyA_USB : joyB_USB;
-wire [22:0] joyC =  status[63] ? joyA_USB : status[62] ? joyB_USB : joyC_USB;
-wire [22:0] joyD =  status[63] ? joyB_USB : status[62] ? joyC_USB : joyD_USB;
+//SM AB UDLR
+wire [31:0] joyA = joydb_1ena ? (OSD_STATUS? 32'b000000 : {joydb_1[10],joydb_1[11]|(joydb_1[10]&joydb_1[5]),joydb_1[5:0]}) : joyA_USB;
+wire [31:0] joyB = joydb_2ena ? (OSD_STATUS? 32'b000000 : {joydb_2[10],joydb_2[11]|(joydb_2[10]&joydb_2[5]),joydb_2[5:0]}) : joydb_1ena ? joyA_USB : joyB_USB;
+wire [31:0] joyC = joydb_2ena ? joyA_USB : joydb_1ena ? joyB_USB : joyC_USB;
+wire [31:0] joyD = joydb_2ena ? joyB_USB : joydb_1ena ? joyC_USB : joyD_USB;
 
+wire [15:0] joydb_1 = JOY_FLAG[2] ? JOYDB9MD_1 : JOY_FLAG[1] ? JOYDB15_1 : '0;
+wire [15:0] joydb_2 = JOY_FLAG[2] ? JOYDB9MD_2 : JOY_FLAG[1] ? JOYDB15_2 : '0;
+wire        joydb_1ena = |JOY_FLAG[2:1]              ;
+wire        joydb_2ena = |JOY_FLAG[2:1] & JOY_FLAG[0];
 
-reg [15:0] joydb9md_1,joydb9md_2;
+//----BA 9876543210
+//----MS ZYXCBAUDLR
+reg [15:0] JOYDB9MD_1,JOYDB9MD_2;
 joy_db9md joy_db9md
 (
-  .clk       ( CLK_VIDEO ), //48MHz
-  .joy_split ( joy_split  ),
-  .joy_mdsel ( joy_mdsel  ),
-  .joy_in    ( joy_in     ),
-  .joystick1 ( joydb9md_1 ),
-  .joystick2 ( joydb9md_2 )	  
+  .clk       ( CLK_JOY    ), //40-50MHz
+  .joy_split ( JOY_SPLIT  ),
+  .joy_mdsel ( JOY_MDSEL  ),
+  .joy_in    ( JOY_MDIN   ),
+  .joystick1 ( JOYDB9MD_1 ),
+  .joystick2 ( JOYDB9MD_2 )	  
+);
+
+//----BA 9876543210
+//----LS FEDCBAUDLR
+reg [15:0] JOYDB15_1,JOYDB15_2;
+joy_db15 joy_db15
+(
+  .clk       ( CLK_JOY   ), //48MHz
+  .JOY_CLK   ( JOY_CLK   ),
+  .JOY_DATA  ( JOY_DATA  ),
+  .JOY_LOAD  ( JOY_LOAD  ),
+  .joystick1 ( JOYDB15_1 ),
+  .joystick2 ( JOYDB15_2 )	  
 );
 
 hps_io #(.STRLEN(($size(CONF_STR)>>3) + ($size(CONF_STR2)>>3) + 1)) hps_io
@@ -355,7 +380,7 @@ hps_io #(.STRLEN(($size(CONF_STR)>>3) + ($size(CONF_STR2)>>3) + 1)) hps_io
 	.paddle_1(pdl[1]),
 	.paddle_2(pdl[2]),
 	.paddle_3(pdl[3]),
-	.joy_raw({joydb9md_1[4],joydb9md_1[6],joydb9md_1[3:0]}), //Menu Dirs, A:Action B:Back (OSD)
+	.joy_raw(OSD_STATUS? (joydb_1[5:0]|joydb_2[5:0]) : 6'b000000 ),
 	
 	.status(status),
 	.status_menumask({raw_db9, raw_serial, ~raw_serial, (palette2_osd != 4'd14), ~gg_avail, bios_loaded, ~bk_ena}),
@@ -549,7 +574,7 @@ always_comb begin
 	if (raw_serial & !raw_serial2) begin
 		USER_OUT[0]  = joypad_out[0];
 		USER_OUT[1]  = ~joy_swap ? ~joypad_clock[1] : ~joypad_clock[0];
-		USER_OUT[6] = 1'b1;
+		USER_OUT[6] = 1'b1; 		
 		USER_OUT[4] = 1'b1;
 		joypad1_data = {2'b0, mic, 1'b0, ~joy_swap ? joypad_bits[0] : ~USER_IN[5]};
 		joypad2_data = {serial_d4, ~USER_IN[2], 2'b00, ~joy_swap ? ~USER_IN[5] : joypad_bits2[0]};
@@ -560,20 +585,27 @@ always_comb begin
 		USER_OUT[4] = 1'b1;
 		joypad1_data = {2'b0, mic, 1'b0, ~joy_swap ? ~USER_IN[3] : ~USER_IN[5]};
 		joypad2_data = {serial_d4, ~USER_IN[2], ~joy_swap ? ~USER_IN[5] : ~USER_IN[3], ~joy_swap ? ~USER_IN[3] : ~USER_IN[5]};
-	end else if (raw_db9) begin
-		USER_OUT[0] = joy_mdsel;
-		USER_OUT[1] = ~joy_swap ? ~joypad_clock[1] : ~joypad_clock[0];
-		USER_OUT[4] = joy_split;
+	end else if (JOY_FLAG[1]) begin
+		USER_OUT[0] = JOY_LOAD;
+		USER_OUT[1] = JOY_CLK;
 		USER_OUT[6] = 1'b1;
+		USER_OUT[4] = 1'b1;
+		joypad1_data = {2'b0, mic, paddle_en & paddle_btn, joypad_bits[0]};
+		joypad2_data = joypad_bits2[0];
+	end else if (JOY_FLAG[2]) begin
+		USER_OUT[0] = JOY_MDSEL;
+		USER_OUT[1] = 1'b1;
+		USER_OUT[6] = 1'b1;
+		USER_OUT[4] = JOY_SPLIT;
 		joypad1_data = {2'b0, mic, paddle_en & paddle_btn, joypad_bits[0]};
 		joypad2_data = joypad_bits2[0];
 	end else begin
 		USER_OUT[0]  = 1'b1;
 		USER_OUT[1]  = 1'b1;
+		USER_OUT[6]  = 1'b1;
 		USER_OUT[4] = 1'b1;
-		USER_OUT[6] = 1'b1;
 		joypad1_data = {2'b0, mic, paddle_en & paddle_btn, joypad_bits[0]};
-		joypad2_data = joypad_bits2[0];		
+		joypad2_data = joypad_bits2[0];
 
 		// periphery on port 2
 		if (lightgun_en)        joypad2_data[4:3] = {trigger,light};
