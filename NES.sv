@@ -325,8 +325,8 @@ wire        forced_scandoubler;
 wire [21:0] gamma_bus;
 
 //SM AB UDLR
-wire [31:0] joyA = joydb_1ena ? (OSD_STATUS? 32'b000000 : {joydb_1[10],joydb_1[11]|(joydb_1[10]&joydb_1[5]),joydb_1[5:0]}) : joyA_USB;
-wire [31:0] joyB = joydb_2ena ? (OSD_STATUS? 32'b000000 : {joydb_2[10],joydb_2[11]|(joydb_2[10]&joydb_2[5]),joydb_2[5:0]}) : joydb_1ena ? joyA_USB : joyB_USB;
+wire [31:0] joyA = joydb_1ena ? (OSD_STATUS? 32'b000000 : {joydb_1[10],joydb_1[11]|(joydb_1[10]&joydb_1[5]),joydb_1[4],joydb_1[5],joydb_1[3:0]}) : joyA_USB;
+wire [31:0] joyB = joydb_2ena ? (OSD_STATUS? 32'b000000 : {joydb_2[10],joydb_2[11]|(joydb_2[10]&joydb_2[5]),joydb_2[4],joydb_2[5],joydb_2[3:0]}) : joydb_1ena ? joyA_USB : joyB_USB;
 wire [31:0] joyC = joydb_2ena ? joyA_USB : joydb_1ena ? joyB_USB : joyC_USB;
 wire [31:0] joyD = joydb_2ena ? joyB_USB : joydb_1ena ? joyC_USB : joyD_USB;
 
