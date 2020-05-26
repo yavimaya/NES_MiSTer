@@ -220,6 +220,7 @@ wire int_audio = 1;
 
 // Figure out file types
 reg type_bios, type_fds, type_gg, type_nsf, type_nes, type_palette, is_bios, downloading;
+reg [24:0] rom_sz;
 
 always_ff @(posedge clk) begin
 	reg old_downld;
@@ -250,6 +251,7 @@ always_ff @(posedge clk) begin
 	end else if (filetype[1:0] == 2'b11)
 		type_palette <= 1;
 
+	if(old_downld && ~downloading & (type_fds|type_nsf|type_nes)) rom_sz <= ioctl_addr - 1'd1;
 end
 
 assign BUTTONS[0] = osd_btn;
@@ -534,7 +536,7 @@ always@(posedge clk) begin
 	end
 end
 
-wire fds_eject = swap_delay[2] | fds_swap_invert ? fds_btn : (clkcount[21] | fds_btn);
+wire fds_eject = swap_delay[2] | fds_swap_invert ? fds_btn : (clkcount[22] | fds_btn);
 
 reg [1:0] nes_ce;
 
@@ -716,7 +718,8 @@ wire fds = (mapper_flags[7:0] == 8'h14);
 wire nsf = (loader_flags[7:0] == 8'h1F);
 wire piano = (mapper_flags[30]);
 wire loader_busy, loader_done, loader_fail;
-wire bios_download;
+wire [20:0] prg_mask;
+wire [19:0] chr_mask;
 
 GameLoader loader
 (
@@ -724,30 +727,23 @@ GameLoader loader
 	.reset            ( loader_reset      ),
 	.downloading      ( downloading       ),
 	.filetype         ( {4'b0000, type_nsf, type_fds, type_nes, type_bios} ),
-	.is_bios          ( is_bios           ),
+	.is_bios          ( is_bios           ), // boot0 bios
 	.indata           ( loader_input      ),
 	.indata_clk       ( loader_clk        ),
 	.invert_mirroring ( mirroring_osd     ),
 	.mem_addr         ( loader_addr       ),
 	.mem_data         ( loader_write_data ),
 	.mem_write        ( loader_write      ),
-	.bios_download    ( bios_download     ),
 	.mapper_flags     ( loader_flags      ),
+	.prg_mask         ( prg_mask          ),
+	.chr_mask         ( chr_mask          ),
 	.busy             ( loader_busy       ),
 	.done             ( loader_done       ),
 	.error            ( loader_fail       ),
 	.rom_loaded       ( rom_loaded        )
 );
 
-reg [24:0] rom_sz;
-always @(posedge clk) begin : flags_block
-	reg done = 0;
-	
-	done <= loader_done;
-	if(~done & loader_done) rom_sz <= ioctl_addr - 1'd1;
-	
-	if (loader_done) mapper_flags <= loader_flags;
-end
+always @(posedge clk) if (loader_done) mapper_flags <= loader_flags;
 
 reg led_blink;
 always @(posedge clk) begin : blink_block
@@ -831,6 +827,9 @@ NES nes (
 	.ppumem_dout     (ppu_dout ),
 	.ppumem_din      (ppu_din  ),
 
+	.prg_mask        (prg_mask ),
+	.chr_mask        (chr_mask ),
+
 	.bram_addr       (bram_addr),
 	.bram_din        (bram_din),
 	.bram_dout       (bram_dout),
@@ -845,16 +844,17 @@ wire  [7:0] cpu_dout, cpu_din, ppu_dout, ppu_din;
 
 wire [2:0] emphasis;
 
-wire [7:0] xor_data;
 wire [7:0] bios_data;
+wire bios_download = downloading & type_bios;
 wire bios_write = (loader_write && bios_download && ~bios_loaded);
+
 reg bios_loaded = 0; // Only load bios once
 reg last_bios_download = 0;
 
 always @(posedge clk) begin
 	last_bios_download <= bios_download;
 	if(last_bios_download && ~bios_download) begin
-		bios_loaded = 1;
+		bios_loaded <= 1;
 	end
 end
 
@@ -864,7 +864,7 @@ dpram #("rtl/fdspatch.mif", 13) biospatch
 	.address_a(ioctl_addr[12:0]),
 	.wren_a(bios_write),
 	.data_a(bios_data ^ loader_write_data),
-	.q_a(xor_data),
+	.q_a(),
 	
 	.clock_b(clk),
 	.address_b(loader_addr[12:0]),
@@ -890,7 +890,7 @@ always @(posedge clk) begin
 	if(loader_write) begin
 		loader_write_triggered <= 1'b1;
 		loader_addr_mem <= loader_addr;
-		loader_write_data_mem <= bios_download ? loader_write_data ^ xor_data : loader_write_data;
+		loader_write_data_mem <= loader_write_data;
 		ioctl_wait <= 1;
 	end
 
@@ -1242,8 +1242,9 @@ module GameLoader
 	output reg [21:0] mem_addr,
 	output [7:0]  mem_data,
 	output        mem_write,
-	output reg    bios_download,
 	output [31:0] mapper_flags,
+	output [20:0] prg_mask,
+	output [19:0] chr_mask,
 	output reg    busy,
 	output reg    done,
 	output reg    error,
@@ -1261,12 +1262,39 @@ reg [21:0] bytes_left;
   
 wire [7:0] prgrom = ines[4];	// Number of 16384 byte program ROM pages
 wire [7:0] chrrom = ines[5];	// Number of 8192 byte character ROM pages (0 indicates CHR RAM)
-wire has_chr_ram = (chrrom == 0);
+wire [3:0] chrram = ines[11][3:0]; // NES 2.0 CHR-RAM size shift count (64 << count)
+wire has_chr_ram = ~is_nes20 ? (chrrom == 0) : |chrram;
+
 assign mem_data = (state == S_CLEARRAM || (~copybios && state == S_COPYBIOS)) ? 8'h00 : indata;
 assign mem_write = (((bytes_left != 0) && (state == S_LOADPRG || state == S_LOADCHR)
                     || (downloading && (state == S_LOADHEADER || state == S_LOADFDS || state == S_LOADNSFH || state == S_LOADNSFD))) && indata_clk)
 						 || ((bytes_left != 0) && ((state == S_CLEARRAM) || (state == S_COPYBIOS) || (state == S_COPYPLAY)) && clearclk == 4'h2);
   
+// detect iNES2.0 compliant header
+wire is_nes20 = (ines[7][3:2] == 2'b10);
+wire is_nes20_prg = (is_nes20 && (ines[9][3:0] == 4'hF));
+wire is_nes20_chr = (is_nes20 && (ines[9][7:4] == 4'hF));
+
+// NES 2.0 PRG & CHR sizes
+reg [21:0] prg_size2, chr_size2, prg_mask_a, chr_mask_a;
+reg [21:0] chr_ram_size;
+always @(posedge clk) begin
+	// PRG
+	// ines[4][1:0]: Multiplier, actual value is MM*2+1 (1,3,5,7)
+	// ines[4][7:2]: Exponent (2^E), 0-63
+	prg_size2 <= is_nes20_prg ? ({19'b0, ines[4][1:0], 1'b1} << ines[4][7:2]) : {prgrom, 14'b0};
+	prg_mask_a <= prg_size2 - 1'b1;
+
+	// CHR
+	chr_size2 <= is_nes20_chr ? ({19'b0, ines[5][1:0], 1'b1} << ines[5][7:2]) : {1'b0, chrrom, 13'b0};
+	chr_ram_size <= is_nes20 ? (22'd64 << chrram) : 22'h2000;
+
+	chr_mask_a <= |chr_size2 ? (chr_size2 - 1'b1) : (chr_ram_size - 1'b1);
+end
+
+assign prg_mask = prg_mask_a[20:0];
+assign chr_mask = chr_mask_a[19:0];
+
 wire [2:0] prg_size = prgrom <= 1  ? 3'd0 :		// 16KB
                       prgrom <= 2  ? 3'd1 : 		// 32KB
                       prgrom <= 4  ? 3'd2 : 		// 64KB
@@ -1283,8 +1311,6 @@ wire [2:0] chr_size = chrrom <= 1  ? 3'd0 : 		// 8KB
                       chrrom <= 32 ? 3'd5 : 		// 256KB
                       chrrom <= 64 ? 3'd6 : 3'd7;// 512KB/1MB
   
-// detect iNES2.0 compliant header
-wire is_nes20 = (ines[7][3:2] == 2'b10);
 // differentiate dirty iNES1.0 headers from proper iNES2.0 ones
 wire is_dirty = !is_nes20 && ((ines[9][7:1] != 0)
 								  || (ines[10] != 0)
@@ -1330,7 +1356,6 @@ always @(posedge clk) begin
 		mem_addr <= type_fds ? 22'b11_1100_0000_0000_0001_0000 :
 		            type_nsf ? 22'b00_0000_0000_0001_0000_0000   // Address for NSF Header (0x80 bytes)
 									: 22'b00_0000_0000_0000_0000_0000;  // Address for FDS : BIOS/PRG
-		bios_download <= 0;
 		copybios <= 0;
 	end else begin
 		case(state)
@@ -1341,7 +1366,7 @@ always @(posedge clk) begin
 			  ctr <= ctr + 1'd1;
 			  mem_addr <= mem_addr + 1'd1;
 			  ines[ctr] <= indata;
-			  bytes_left <= {prgrom, 14'b0};
+			  bytes_left <= prg_size2;
 			  if (ctr == 4'b1111) begin
 				 // Check the 'NES' header. Also, we don't support trainers.
 				 busy <= 1;
@@ -1357,7 +1382,6 @@ always @(posedge clk) begin
 					state <= S_LOADFDS;
 					mem_addr <= 22'b00_0000_0000_0000_0001_0000;  // Address for BIOS skip Header
 					bytes_left <= 21'b1;
-					bios_download <= 1;
 				 end else if(type_fds) begin // FDS
 					state <= S_LOADFDS;
 					mem_addr <= 22'b11_1100_0000_0000_0010_0000;  // Address for FDS no Header
@@ -1372,7 +1396,8 @@ always @(posedge clk) begin
 			  end
 			end
 		S_LOADPRG, S_LOADCHR: begin // Read the next |bytes_left| bytes into |mem_addr|
-			 if (bytes_left != 0) begin
+			 // Abort when downloading stops and there are bytes left (invalid header)
+			 if (downloading && bytes_left != 0) begin
 				if (indata_clk) begin
 				  bytes_left <= bytes_left - 1'd1;
 				  mem_addr <= mem_addr + 1'd1;
@@ -1380,7 +1405,7 @@ always @(posedge clk) begin
 			 end else if (state == S_LOADPRG) begin
 				state <= S_LOADCHR;
 				mem_addr <= 22'b10_0000_0000_0000_0000_0000; // Address for CHR
-				bytes_left <= {1'b0, chrrom, 13'b0};
+				bytes_left <= chr_size2;
 			 end else if (state == S_LOADCHR) begin
 				done <= 1;
 				busy <= 0;
@@ -1401,7 +1426,7 @@ always @(posedge clk) begin
 //				bytes_left <= 21'h800;
 				mem_addr <= 22'b11_1000_0000_0001_0000_0010; // FDS - Clear these two RAM addresses to restart BIOS
 				bytes_left <= 21'h2;
-				ines[4] <= 8'hFF;//no masking
+				ines[4] <= 8'h80;//no masking
 				ines[5] <= 8'h00;//0x2000
 				ines[6] <= 8'h40;
 				ines[7] <= 8'h10;
@@ -1464,14 +1489,14 @@ always @(posedge clk) begin
 			 end else begin
 				mem_addr <= 22'b00_0000_0000_0001_1000_0000; // Address for NSF Player (0x180)
 				bytes_left <= 21'h0E80;
-				ines[4] <= 8'hFF;//no masking
-				ines[5] <= 8'h00;//0x2000
+				ines[4] <= 8'h80;//no masking
+				ines[5] <= 8'h00;//no CHR ROM
 				ines[6] <= 8'hF0;//Use Mapper 31
 				ines[7] <= 8'h18;//Use NES 2.0
 				ines[8] <= 8'hF0;//Use Submapper 15
 				ines[9] <= 8'h00;
 				ines[10] <= 8'h00;
-				ines[11] <= 8'h00;
+				ines[11] <= 8'h07;//NES 2.0 8KB CHR RAM
 				ines[12] <= 8'h00;
 				ines[13] <= 8'h00;
 				ines[14] <= 8'h00;
@@ -1494,7 +1519,6 @@ always @(posedge clk) begin
 		S_DONE: begin // Read the next |bytes_left| bytes into |mem_addr|
 			 done <= 1;
 			 busy <= 0;
-			 bios_download <= 0;
 			end
 		endcase
 	end
