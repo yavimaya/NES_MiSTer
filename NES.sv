@@ -204,7 +204,7 @@ parameter CONF_STR2 = {
 		"P2O9,Swap Joysticks,No,Yes;",
 		"P2OA,Multitap,Disabled,Enabled;",
 		"P2OQ,Serial Mode,None,SNAC;",
-		"P2H4OB,SNAC Mode, 1 Player, 2 Players;",
+		"H4OB,SNAC Mode, 1 Player, 2 Players;",
 		"H4P2OT,SNAC Zapper,Off,On;",
 		"P2o02,Periphery,None,Zapper(Mouse),Zapper(Joy1),Zapper(Joy2),Vaus,Vaus(A-Trigger),Powerpad,Family Trainer;",
 		"P2-;",		
