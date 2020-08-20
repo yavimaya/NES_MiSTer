@@ -333,8 +333,8 @@ wire [21:0] gamma_bus;
 
 wire [31:0] joyA = joydb_1ena ?
 	!status[60] ? {
-		//SM AB UDLR
-		OSD_STATUS? 32'b000000 : {joydb_1[10],joydb_1[11]|(joydb_1[10]&joydb_1[5]),joydb_1[4],joydb_1[5],joydb_1[3:0]}
+		//SM BC UDLR
+		OSD_STATUS? 32'b000000 : {joydb_1[10],joydb_1[11]|(joydb_1[10]&joydb_1[5]),joydb_1[5],joydb_1[6],joydb_1[3:0]}
 		} :
 		{ 
 		//SM CB UDLR
@@ -344,8 +344,8 @@ wire [31:0] joyA = joydb_1ena ?
 
 wire [31:0] joyB = joydb_2ena ?
 	!status[60] ? {
-		//SM AB UDLR
-		OSD_STATUS? 32'b000000 : {joydb_2[10],joydb_2[11]|(joydb_2[10]&joydb_2[5]),joydb_2[4],joydb_2[5],joydb_2[3:0]}
+		//SM BC UDLR
+		OSD_STATUS? 32'b000000 : {joydb_2[10],joydb_2[11]|(joydb_2[10]&joydb_2[5]),joydb_2[5],joydb_2[6],joydb_2[3:0]}
 		} :
 		{ 
 		//SM CB UDLR
