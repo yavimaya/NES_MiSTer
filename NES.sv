@@ -200,6 +200,7 @@ parameter CONF_STR2 = {
 		"P2,Input Options;",
 		"d4P2oUV,UserIO Joystick,Off,DB9MD,DB15 ;",
 		"d4P2oT,UserIO Players, 1 Player,2 Players;",
+		"d4P2oS,Buttons Config.,Option 1,Option 2;",
 		"P2-;",
 		"P2O9,Swap Joysticks,No,Yes;",
 		"P2OA,Multitap,Disabled,Enabled;",
@@ -329,9 +330,29 @@ wire        forced_scandoubler;
 
 wire [21:0] gamma_bus;
 
-//SM AB UDLR
-wire [31:0] joyA = joydb_1ena ? (OSD_STATUS? 32'b000000 : {joydb_1[10],joydb_1[11]|(joydb_1[10]&joydb_1[5]),joydb_1[4],joydb_1[5],joydb_1[3:0]}) : joyA_USB;
-wire [31:0] joyB = joydb_2ena ? (OSD_STATUS? 32'b000000 : {joydb_2[10],joydb_2[11]|(joydb_2[10]&joydb_2[5]),joydb_2[4],joydb_2[5],joydb_2[3:0]}) : joydb_1ena ? joyA_USB : joyB_USB;
+
+wire [31:0] joyA = joydb_1ena ?
+	!status[60] ? {
+		//SM AB UDLR
+		OSD_STATUS? 32'b000000 : {joydb_1[10],joydb_1[11]|(joydb_1[10]&joydb_1[5]),joydb_1[4],joydb_1[5],joydb_1[3:0]}
+		} :
+		{ 
+		//SM CB UDLR
+		OSD_STATUS? 32'b000000 : {joydb_1[10],joydb_1[11]|(joydb_1[10]&joydb_1[5]),joydb_1[6],joydb_1[5],joydb_1[3:0]}
+	}
+: joyA_USB;
+
+wire [31:0] joyB = joydb_2ena ?
+	!status[60] ? {
+		//SM AB UDLR
+		OSD_STATUS? 32'b000000 : {joydb_2[10],joydb_2[11]|(joydb_2[10]&joydb_2[5]),joydb_2[4],joydb_2[5],joydb_2[3:0]}
+		} :
+		{ 
+		//SM CB UDLR
+		OSD_STATUS? 32'b000000 : {joydb_2[10],joydb_2[11]|(joydb_2[10]&joydb_2[5]),joydb_2[6],joydb_2[5],joydb_2[3:0]}
+}
+: joydb_1ena ? joyA_USB : joyB_USB;
+
 wire [31:0] joyC = joydb_2ena ? joyA_USB : joydb_1ena ? joyB_USB : joyC_USB;
 wire [31:0] joyD = joydb_2ena ? joyB_USB : joydb_1ena ? joyC_USB : joyD_USB;
 
